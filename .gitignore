@@ -1,0 +1,15 @@
+# ignore pycharm working files
+**/__pycache__
+*.idea/*
+
+# ignore compiled python scripts
+*pyc
+
+# ignore generated schema checksum
+tflite_schema.md5
+
+# ignore auto-generated tflite flatbuffer python interface
+**/tflite
+
+# ignore models path
+**/models
