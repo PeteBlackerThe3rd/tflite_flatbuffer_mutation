@@ -100,18 +100,7 @@ def pre_allocate_memory(model):
   output_filename = FLAGS.pre_allocate_memory[0]
   print("Allocating memory and saving flatbuffer to [%s]" % output_filename)
 
-  metadata = model.metadata
-  if metadata is None:
-    metadata = []
-  print("Model contains %d meta data entries" % len(metadata))
-  for i, m in enumerate(metadata):
-    print("element type : %s" % str(type(m)))
-    print("[%d] - %s" % (i, m.name))
-
-  print("Add metadata item to model")
-  new_metadata = Metadata.MetadataT()
-  print("type of new_metadata object : %s" % str(type(new_metadata)))
-  new_metadata.name = "Test Metadata"
+  # TODO actually pre-allocate memory
 
   # create new buffer to hold the metadata content
   metadata_buffer = Buffer.BufferT()
@@ -120,37 +109,18 @@ def pre_allocate_memory(model):
     model.buffers = []
   new_buffer_idx = len(model.buffers)
   model.buffers.append(metadata_buffer)
-  new_metadata.buffer = new_buffer_idx
 
+  # Add metadata item to model
+  new_metadata = Metadata.MetadataT()
+  new_metadata.name = "Test Metadata"
+  new_metadata.buffer = new_buffer_idx
   if model.metadata is None:
     model.metadata = []
   model.metadata.append(new_metadata)
 
-  metadata = model.metadata
-  print("Model contains %d meta data entries" % len(metadata))
-  for i, m in enumerate(metadata):
-    print("element type : %s" % str(type(m)))
-    print("[%d] - %s" % (i, m.name))
-
-  print("Rebuild and save modified model")
+  # print("Rebuild and save modified model")
   builder = fb.Builder(1024)
-
-  if builder.finished:
-    print("builder finished")
-  else:
-    print("builder not finished")
-  print("Builder %d bytes" % len(builder.Bytes))
-
   packed_model = model.Pack(builder)
-  print("Packed model")
-  if builder.finished:
-    print("builder finished")
-  else:
-    print("builder not finished")
-  print("Builder %d bytes" % len(builder.Bytes))
-
-  print("Builder head is [%s]" % builder.head)
-
   builder.Finish(packed_model, file_identifier=bytearray("TFL3", 'utf-8'))
   new_model_buffer = builder.Output()
 
@@ -193,10 +163,12 @@ if __name__ == '__main__':
   parser.add_argument('file_name', type=str,
                       help='Name of the tflite flatbuffer file to load.')
   parser.add_argument('-pm', '--pre_allocate_memory',
+                      metavar='Output_File',
                       nargs=1, default='',
                       help='Pre allocate intermediate tensor buffers, save'
                            'in the metadata table and write to new flatbuffer')
   parser.add_argument('-i', '--index',
+                      metavar='Index',
                       type=int, default=0,
                       help='Index of the subgraph to analyse. Defaults to 0')
   parser.add_argument('-o', '--operations',
