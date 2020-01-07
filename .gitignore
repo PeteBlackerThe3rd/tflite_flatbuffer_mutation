@@ -5,9 +5,6 @@
 # ignore compiled python scripts
 *pyc
 
-# ignore generated schema checksum
-tflite_schema.md5
-
 # ignore auto-generated tflite flatbuffer python interface
 **/tflite
 

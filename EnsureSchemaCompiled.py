@@ -5,19 +5,26 @@ import hashlib as hl
 from shutil import which
 import subprocess as subproc
 
-def compile_schema(schema_filename, checksum_filename):
+schema_filename = 'schema/schema.fbs'
+checksum_filename = 'tflite/schema.md5'
+
+
+def compile_schema():
   # check flatcc tool is installed
   flatcc_installed = which('flatc') is not None
 
-  print("One time compilation of flatbuffer schema, python interface.")
+  print("One time compilation of tflite flatbuffer schema, python interface.")
 
   if flatcc_installed:
     print("flatbuffer compiler flatc found okay.")
   else:
-    # TODO add installation instructions
-    print("flatbuffer compiler not installed. Add installation instructions.")
+    print("Error: Flatbuffers not installed, schema cannot be compiled.\n"
+          "Please follow the installation instructions at "
+          "https://google.github.io/flatbuffers/flatbuffers_guide_building.html"
+          "\nto install the flatbuffers package then re-try.")
+    quit(1)
 
-  compile_schema_cmd = 'flatc --python --gen-object-api -o test/ %s' % \
+  compile_schema_cmd = 'flatc --python --gen-object-api %s' % \
                        schema_filename
 
   try:
@@ -29,13 +36,13 @@ def compile_schema(schema_filename, checksum_filename):
     checksum_bytes = bytearray(checksum, 'utf8')
     open(checksum_filename, 'wb').write(checksum_bytes)
 
+    print("successfully compiled tflite flatbuffer schema.")
+
   except subproc.CalledProcessError as e:
     print("Error running flatc tool: %s" % format(e))
 
 
 def ensure_schema_compiled():
-  schema_filename = 'schema/schema.fbs'
-  checksum_filename = "tflite_schema.md5"
   compile = False
 
   # if the schema checksum file doesn't exist then it definitely needs compiling
@@ -51,7 +58,8 @@ def ensure_schema_compiled():
       compile = True
 
   if compile:
-    compile_schema(schema_filename, checksum_filename)
+    compile_schema()
+
 
 # call the function on library import.
 ensure_schema_compiled()
