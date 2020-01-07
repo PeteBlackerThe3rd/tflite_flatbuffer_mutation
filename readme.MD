@@ -15,6 +15,7 @@ high level information of the model.
 | file_name | Name of the tflite flatbuffer file to load. |
 | **optional arguments:** | |
 | -h, --help | show this help message and exit |
-| -i INDEX, --index INDEX | Index of the subgraph to analyse. Defaults to 0 |
+| -i Index, --index Index | Index of the subgraph to analyse. Defaults to 0 |
 | -o, --operations | Print a summary of the operations used in this model |
 | -md, --meta_data | Print a summary of all metadata entries in this model |
+| -pm Output_File, --pre_allocate_memory Output_File | (In progress) pre-allocate intermediate tensors and safe positions into metadata table |
