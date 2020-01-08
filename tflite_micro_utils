@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -12,6 +13,7 @@ import array
 import hashlib as hl
 from shutil import which
 import subprocess as subproc
+import struct
 
 # local module which compiles the provided flatbuffer schema into it's
 # python interface if it doesn't exist or needs updating
@@ -27,6 +29,9 @@ import tflite.DepthwiseConv2DOptions as DepthwiseConv2DOptions
 import tflite.BuiltinOperator as BuiltinOperator
 import tflite.Metadata as Metadata
 import tflite.Buffer as Buffer
+
+# import flatbuffer to cc & h converter
+import flatbuffer_2_tfl_micro as code_gen
 
 
 def load_flatbuffer():
@@ -44,16 +49,10 @@ def load_flatbuffer():
     buf = bytearray(tflite_file.read())
     print("Read %d bytes okay." % len(buf))
 
-    # print("Generate flatbuffer using original API")
-    # model_old = TFLModel.Model.GetRootAsModel(buf, 0)
-    # print("Loaded model with version %d" % model_old.Version())
-
-    # print("Generate flatbuffer object API instance of model")
-    # model = tfl_model.ModelT()
     n = fb.encode.Get(fb.packer.uoffset, buf, 0)
-    print("n = %d" % n)
+    # print("n = %d" % n)
     model = TFLModel.ModelT.InitFromBuf(buf, n)
-    print("Loaded version %s model" % model.version)
+    print("Loaded TFL%s flatbuffer" % model.version)
 
     return model
 
@@ -95,6 +94,11 @@ def list_operations(model):
     print("[%3d] %s" % (i, operator_description))
 
 
+def generate_buffer_offsets_metadata(offsets, sub_graph=0, version=0):
+  words_list = [version, sub_graph, len(offsets)] + offsets
+  return struct.pack('<'+'I'*len(words_list), *words_list)
+
+
 def pre_allocate_memory(model):
 
   output_filename = FLAGS.pre_allocate_memory[0]
@@ -104,18 +108,24 @@ def pre_allocate_memory(model):
 
   # create new buffer to hold the metadata content
   metadata_buffer = Buffer.BufferT()
-  metadata_buffer.data = bytearray("This is the test metadata. honest!", 'utf8')
+  metadata = generate_buffer_offsets_metadata([4, 8, 12, 16],
+                                              sub_graph=FLAGS.index)
+  metadata_buffer.data = metadata
+  #  bytearray("This is the test metadata. honest!", 'utf8')
   if model.buffers is None:
     model.buffers = []
   new_buffer_idx = len(model.buffers)
   model.buffers.append(metadata_buffer)
 
-  # Add metadata item to model
-  new_metadata = Metadata.MetadataT()
-  new_metadata.name = "Test Metadata"
-  new_metadata.buffer = new_buffer_idx
+  # Add metadata item to model, if there is already an
+  # offline memory allocation entry then update it, otherwise add
+  # a new metadata entry
   if model.metadata is None:
     model.metadata = []
+
+  new_metadata = Metadata.MetadataT()
+  new_metadata.name = "OfflineMemoryAllocation"
+  new_metadata.buffer = new_buffer_idx
   model.metadata.append(new_metadata)
 
   # print("Rebuild and save modified model")
@@ -136,7 +146,6 @@ def list_meta_data(model):
     metadata = []
   print("Model contains %d meta data entries" % len(metadata))
   for i, m in enumerate(metadata):
-    # print("element type : %s" % str(type(m)))
     print("[%d] \"%s\" (%d bytes of data stored in buffer %d)" %
           (i,
            m.name.decode("utf-8"),
@@ -144,18 +153,114 @@ def list_meta_data(model):
            m.buffer))
 
 
+def show_offline_mem_alloc(model):
+  """
+  Function to validate and show any offline memory allocation
+  metadata contained in the given model object
+  :param model: model object to inspect
+  :return: None
+  """
+  oma_meta_idxs = []
+  oma_buffers = []
+  metadata = model.metadata
+  if metadata is None:
+    metadata = []
+  for i, m in enumerate(metadata):
+    if m.name.decode('utf-8') == "OfflineMemoryAllocation":
+      oma_meta_idxs.append(i)
+      oma_buffers.append(m.buffer)
+
+  if len(oma_buffers) == 0:
+    print("No offline memory allocation metadata present.")
+  else:
+    for idx, buffer_idx in enumerate(oma_buffers):
+      print("\nMetadata entry [%2d] - OfflineMemoryAllocation" %
+            oma_meta_idxs[idx])
+
+      buffer = model.buffers[buffer_idx].data
+      word_list = struct.unpack('<' + 'I' * int(len(buffer)/4), buffer)
+
+      if (len(word_list) == 0):
+        print("Error: Zero length metadata found!")
+        continue
+
+      version = word_list[0]
+      print("Format version %d" % version)
+      version_supported = False
+
+      # Currently the only defined version of this standard
+      if version == 0:
+        version_supported = True
+        # verify size of metadata buffer
+        if len(word_list) < 3:
+          print("Error: Metadata buffer too short for header!")
+          continue
+        if len(word_list) < (3+word_list[2]):
+          print("Error: Metadata buffer too short for given offset count!")
+          continue
+        if len(word_list) < (3+word_list[2]):
+          print("Error: Metadata buffer too long for given offset count!")
+          continue
+
+        print("Subgraph %d" % word_list[1])
+        for i, offset in enumerate(word_list[2:]):
+          print("Offset [%3d] %d bytes" % (i, offset))
+
+      if not version_supported:
+        print("Error: unsupported format version!")
+
+def write_cc_file():
+  try:
+    tflite_file = open(FLAGS.file_name, 'rb')
+
+    print("=" * (len(FLAGS.file_name) + 35))
+    print("====== Reading flatbuffer \"%s\" ======" % FLAGS.file_name)
+    print("=" * (len(FLAGS.file_name) + 35))
+    buf = bytearray(tflite_file.read())
+    print("Read %d bytes okay." % len(buf))
+
+    header_comment = ("Automatically generated by tflite_micro_utils "
+                      "using the command:\n"
+                      "tflite_micro_utils -wc %s %s %s" %
+                      (FLAGS.generate_c[0],
+                       FLAGS.generate_c[1],
+                       FLAGS.file_name))
+
+    base_filename = os.path.splitext(FLAGS.generate_c[0])[0]
+    identifier = FLAGS.generate_c[1]
+
+    print("Generating c source files containing flatbuffer:")
+    print("  - %s.cc\n  - %s.h" %
+          (base_filename, base_filename))
+
+    code_gen.write_tf_lite_micro_model(buf,
+                                       base_file_name=base_filename,
+                                       data_variable_name=identifier,
+                                       header_comment=header_comment)
+
+    print("Complete")
+
+  except IOError:
+    print("Failed to open file \"%s\"." % FLAGS.file_name)
+    quit()
+
+
 def main():
 
-  model = load_flatbuffer()
-
   if FLAGS.operations:
-    list_operations(model)
+    list_operations(load_flatbuffer())
 
   if FLAGS.pre_allocate_memory:
-    pre_allocate_memory(model)
+    pre_allocate_memory(load_flatbuffer())
 
   if FLAGS.meta_data:
-    list_meta_data(model)
+    list_meta_data(load_flatbuffer())
+
+  if FLAGS.offline_mem_alloc:
+    show_offline_mem_alloc(load_flatbuffer())
+
+  if FLAGS.generate_c:
+    write_cc_file()
 
 
 if __name__ == '__main__':
@@ -167,6 +272,10 @@ if __name__ == '__main__':
                       nargs=1, default='',
                       help='Pre allocate intermediate tensor buffers, save'
                            'in the metadata table and write to new flatbuffer')
+  parser.add_argument('-g', '--generate_c',
+                      metavar='Output_File Identifier',
+                      nargs=2, default='',
+                      help='Write flatbuffer to cc & h files.')
   parser.add_argument('-i', '--index',
                       metavar='Index',
                       type=int, default=0,
@@ -183,10 +292,16 @@ if __name__ == '__main__':
                       action="store_true",
                       help="Prints any meta-data members stored in this "
                            "tflite flatbuffer.")
+  parser.add_argument('-oma', '--offline_mem_alloc',
+                      action="store_true",
+                      help='Print details of any offline memory allocation '
+                           'metadata present.'
+                           'this model.')
   parser.add_argument('-b', '--buffers',
                       action="store_true",
                       help="Prints a summary of all memory buffers defined "
                            "in this model.")
+
   """parser.add_argument('-w', '--weights', action="store_true",
                       help='Print detail of the weights of this model.')
   parser.add_argument('-m', '--memory',
